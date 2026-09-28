@@ -69,7 +69,6 @@ def fetch_and_post():
         "url": link,
         "color": 1940434,  # Twitter 藍
         "footer": {
-            "text": "新們男孩 • 譯自 Dexerto"
         }
     }
     
