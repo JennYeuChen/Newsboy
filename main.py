@@ -1,5 +1,6 @@
 import os
 import sys
+import feedparser
 import requests
 from googletrans import Translator
 
@@ -9,105 +10,71 @@ if not DISCORD_WEBHOOK_URL:
     print("❌ Error: 未設定 DISCORD_WEBHOOK_URL")
     sys.exit(1)
 
-TWITTER_HANDLE = "Dexerto"
-
-def fetch_latest_tweet():
-    # 利用 Twitter 官方 Syndication (Widget) API，穩定且不需 Token
-    url = f"https://syndication.twitter.com/srv/timeline-profile/priv-raw?screen_name={TWITTER_HANDLE}"
-    
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
-
-    try:
-        response = requests.get(url, headers=headers, timeout=10)
-        if response.status_code != 200:
-            print(f"❌ API 回傳狀態碼: {response.status_code}")
-            return None
-
-        data = response.json()
-        timeline = data.get("timeline", {})
-        instructions = timeline.get("instructions", [])
-
-        tweets = []
-        for instruction in instructions:
-            if instruction.get("type") == "TimelineAddEntries":
-                entries = instruction.get("entries", [])
-                for entry in entries:
-                    content = entry.get("content", {})
-                    item_content = content.get("itemContent", {})
-                    tweet_results = item_content.get("tweet_results", {})
-                    result = tweet_results.get("result", {})
-                    if result:
-                        tweets.append(result)
-
-        if not tweets:
-            print("⚠️ 未找到任何推文資料")
-            return None
-
-        return tweets[0]  # 最新的一則推文
-
-    except Exception as e:
-        print(f"❌ 抓取推文失敗: {e}")
-        return None
+# Dexerto 官方網站 RSS
+FEED_URL = "https://www.dexerto.com/feed/"
 
 def fetch_and_post():
-    tweet = fetch_latest_tweet()
-
-    if not tweet:
-        print("❌ 無法取得 @Dexerto 的推文。")
+    print(f"🔍 正在抓取 Dexerto 官方新聞 RSS: {FEED_URL}")
+    feed = feedparser.parse(FEED_URL)
+    
+    if not feed.entries:
+        print("❌ 未能抓取到任何新聞文章。")
         sys.exit(1)
 
-    # 解析推文內容
-    legacy = tweet.get("legacy", {})
-    tweet_id = legacy.get("id_str")
-    full_text = legacy.get("full_text", "")
+    # 取得最新的一篇文章
+    latest_entry = feed.entries[0]
+    title = latest_entry.get("title", "")
+    summary = latest_entry.get("summary", "")
+    link = latest_entry.get("link", "")
     
-    # 建立原推文連結
-    tweet_url = f"https://x.com/{TWITTER_HANDLE}/status/{tweet_id}"
-
-    # 提取圖片網址 (媒體附加內容)
+    # 嘗試提取文章的高清封面圖
     image_url = None
-    extended_entities = legacy.get("extended_entities", {})
-    media_list = extended_entities.get("media", [])
-    if media_list:
-        image_url = media_list[0].get("media_url_https")
+    if 'media_content' in latest_entry and len(latest_entry.media_content) > 0:
+        image_url = latest_entry.media_content[0].get('url')
+    elif 'media_thumbnail' in latest_entry and len(latest_entry.media_thumbnail) > 0:
+        image_url = latest_entry.media_thumbnail[0].get('url')
+    elif 'enclosures' in latest_entry and len(latest_entry.enclosures) > 0:
+        image_url = latest_entry.enclosures[0].get('url')
 
-    print(f"📌 最新推文 ID: {tweet_id}")
-    print(f"📌 推文連結: {tweet_url}")
-    print(f"📌 原文內容: {full_text[:50]}...")
+    # 摘要文字清理（截斷過長 HTML 內文）
+    clean_summary = summary.split('<')[0][:300] if summary else ""
 
-    # 翻譯內文
+    print(f"📌 抓取到的最新文章: {title}")
+    print(f"📌 文章連結: {link}")
+
+    # 翻譯標題與摘要為繁體中文
     translator = Translator()
     try:
-        translated_text = translator.translate(full_text, dest='zh-tw').text
+        translated_title = translator.translate(title, dest='zh-tw').text
+        translated_summary = translator.translate(clean_summary, dest='zh-tw').text if clean_summary else ""
     except Exception as e:
-        print(f"⚠️ 翻譯失敗，使用原文: {e}")
-        translated_text = full_text
+        print(f"⚠️ 翻譯失敗，使用英文原文: {e}")
+        translated_title = title
+        translated_summary = clean_summary
 
     # 組裝 Discord Embed
     embed = {
-        "title": "📰 Newsboy 快訊 (X / Twitter)",
-        "description": translated_text,
-        "url": tweet_url,
-        "color": 1940434,  # Twitter 藍
+        "title": f"📰 Newsboy 快訊：{translated_title}",
+        "description": translated_summary,
+        "url": link,
+        "color": 15258703,  # Dexerto 品牌橘色
         "footer": {
-            "text": "Newsboy • 轉譯自 @Dexerto"
+            "text": "Newsboy • 轉譯自 Dexerto.com"
         }
     }
-
+    
     if image_url:
         embed["image"] = {"url": image_url}
 
     payload = {
         "username": "Newsboy",
-        "avatar_url": "https://abs.twimg.com/icons/apple-touch-icon-192x192.png",
+        "avatar_url": "https://i.imgur.com/8N69fS7.png",
         "embeds": [embed]
     }
 
     response = requests.post(DISCORD_WEBHOOK_URL, json=payload)
     if response.status_code in [200, 204]:
-        print("🚀 Newsboy 成功推送推文到 Discord！")
+        print("🚀 Newsboy 成功推送最新新聞到 Discord！")
     else:
         print(f"❌ 發送到 Discord 失敗，狀態碼: {response.status_code}, 回應: {response.text}")
         sys.exit(1)
