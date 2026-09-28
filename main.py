@@ -7,30 +7,51 @@ from googletrans import Translator
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 
 if not DISCORD_WEBHOOK_URL:
-    print("Error: 未設定 DISCORD_WEBHOOK_URL")
+    print("❌ Error: 未設定 DISCORD_WEBHOOK_URL")
     sys.exit(1)
 
+# 可用的 Nitter 鏡站清單（若預設的抓不到，會依序嘗試）
+INSTANCES = [
+    "https://nitter.poast.org",
+    "https://nitter.privacydev.net",
+    "https://nitter.cz",
+    "https://nitter.projectsegfau.lt"
+]
+
+def fetch_tweets():
+    for instance in INSTANCES:
+        print(f"🔍 嘗試使用 Nitter 鏡站: {instance}")
+        try:
+            scraper = Nitter(log_level=1, instance=instance)
+            tweets = scraper.get_tweets("Dexerto", mode='user', number=5)
+            
+            if tweets and tweets.get('tweets') and len(tweets['tweets']) > 0:
+                print(f"✅ 成功從 {instance} 抓取到 {len(tweets['tweets'])} 則推文！")
+                return tweets['tweets']
+            else:
+                print(f"⚠️ {instance} 回傳空資料，切換下一個鏡站...")
+        except Exception as e:
+            print(f"❌ 鏡站 {instance} 失敗: {e}")
+            
+    return None
+
 def fetch_and_post():
-    # 初始化 scraper (會自動搜尋目前尚在運作的公用鏡站)
-    scraper = Nitter()
-    
-    try:
-        # 抓取 @Dexerto 最新 5 則推文
-        tweets = scraper.get_tweets("Dexerto", mode='user', number=5)
-    except Exception as e:
-        print(f"抓取 X 貼文失敗: {e}")
-        return
+    tweets = fetch_tweets()
 
-    if not tweets.get('tweets'):
-        print("未抓取到任何推文")
-        return
+    if not tweets:
+        print("❌ 所有 Nitter 鏡站皆無法抓取到 @Dexerto 的推文。")
+        # 拋出異常讓 GitHub Actions 顯示失敗 (紅色)，方便排查
+        sys.exit(1)
 
-    # 取最新的推文
-    latest_tweet = tweets['tweets'][0]
+    # 取最新的第一則推文
+    latest_tweet = tweets[0]
     tweet_text = latest_tweet.get('text', '')
     tweet_link = latest_tweet.get('link', '')
     pictures = latest_tweet.get('pictures', [])
     
+    print(f"📌 抓取到的最新推文連結: {tweet_link}")
+    print(f"📌 原文內容: {tweet_text[:50]}...")
+
     image_url = pictures[0] if pictures else None
 
     # 翻譯推文內容
@@ -38,9 +59,10 @@ def fetch_and_post():
     try:
         translated_text = translator.translate(tweet_text, dest='zh-tw').text
     except Exception as e:
-        print(f"翻譯失敗: {e}")
+        print(f"⚠️ 翻譯失敗，使用原文: {e}")
         translated_text = tweet_text
 
+    # 組裝 Discord Embed
     embed = {
         "title": "📰 Newsboy 快訊 (X / Twitter)",
         "description": translated_text,
@@ -60,11 +82,13 @@ def fetch_and_post():
         "embeds": [embed]
     }
 
+    # 發送到 Discord
     response = requests.post(DISCORD_WEBHOOK_URL, json=payload)
     if response.status_code in [200, 204]:
-        print("Newsboy 成功推送 X 貼文！")
+        print("🚀 Newsboy 成功推送推文到 Discord！")
     else:
-        print(f"發送失敗: {response.status_code}")
+        print(f"❌ 發送到 Discord 失敗，狀態碼: {response.status_code}, 回應: {response.text}")
+        sys.exit(1)
 
 if __name__ == "__main__":
     fetch_and_post()
