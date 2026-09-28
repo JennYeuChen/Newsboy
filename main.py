@@ -1,6 +1,5 @@
 import os
 import sys
-import feedparser
 import requests
 from googletrans import Translator
 
@@ -10,73 +9,88 @@ if not DISCORD_WEBHOOK_URL:
     print("❌ Error: 未設定 DISCORD_WEBHOOK_URL")
     sys.exit(1)
 
-# 多個免費公用 RSSHub 節點，自動備援
-RSSHUB_NODES = [
-    "https://rsshub.app/twitter/user/Dexerto",
-    "https://rsshub.rssforever.com/twitter/user/Dexerto",
-    "https://rsshub.lit.edu.mo/twitter/user/Dexerto"
-]
+TWITTER_HANDLE = "Dexerto"
 
-def fetch_feed():
-    # 設定 User-Agent 模擬一般瀏覽器，避免被阻擋
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-    }
+def fetch_latest_tweet():
+    # 利用 Twitter 官方 Syndication (Widget) API，穩定且不需 Token
+    url = f"https://syndication.twitter.com/srv/timeline-profile/priv-raw?screen_name={TWITTER_HANDLE}"
     
-    for url in RSSHUB_NODES:
-        print(f"🔍 嘗試抓取 RSSHub 節點: {url}")
-        try:
-            feed = feedparser.parse(url, request_headers=headers)
-            if feed.entries and len(feed.entries) > 0:
-                print(f"✅ 成功從 {url} 抓取到 {len(feed.entries)} 則推文！")
-                return feed.entries
-            else:
-                print(f"⚠️ {url} 未返回有效內容，嘗試下一個節點...")
-        except Exception as e:
-            print(f"❌ 節點 {url} 抓取失敗: {e}")
-    return None
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        if response.status_code != 200:
+            print(f"❌ API 回傳狀態碼: {response.status_code}")
+            return None
+
+        data = response.json()
+        timeline = data.get("timeline", {})
+        instructions = timeline.get("instructions", [])
+
+        tweets = []
+        for instruction in instructions:
+            if instruction.get("type") == "TimelineAddEntries":
+                entries = instruction.get("entries", [])
+                for entry in entries:
+                    content = entry.get("content", {})
+                    item_content = content.get("itemContent", {})
+                    tweet_results = item_content.get("tweet_results", {})
+                    result = tweet_results.get("result", {})
+                    if result:
+                        tweets.append(result)
+
+        if not tweets:
+            print("⚠️ 未找到任何推文資料")
+            return None
+
+        return tweets[0]  # 最新的一則推文
+
+    except Exception as e:
+        print(f"❌ 抓取推文失敗: {e}")
+        return None
 
 def fetch_and_post():
-    entries = fetch_feed()
+    tweet = fetch_latest_tweet()
 
-    if not entries:
-        print("❌ 所有 RSSHub 節點皆無法抓取到 @Dexerto 的推文。")
+    if not tweet:
+        print("❌ 無法取得 @Dexerto 的推文。")
         sys.exit(1)
 
-    # 取最新的推文
-    latest = entries[0]
-    title = latest.get('title', '')
-    summary = latest.get('summary', '')
-    link = latest.get('link', '')
+    # 解析推文內容
+    legacy = tweet.get("legacy", {})
+    tweet_id = legacy.get("id_str")
+    full_text = legacy.get("full_text", "")
+    
+    # 建立原推文連結
+    tweet_url = f"https://x.com/{TWITTER_HANDLE}/status/{tweet_id}"
 
-    # 提取推文附帶的圖片
+    # 提取圖片網址 (媒體附加內容)
     image_url = None
-    if 'media_content' in latest and len(latest.media_content) > 0:
-        image_url = latest.media_content[0].get('url')
-    elif 'enclosures' in latest and len(latest.enclosures) > 0:
-        image_url = latest.enclosures[0].get('url')
+    extended_entities = legacy.get("extended_entities", {})
+    media_list = extended_entities.get("media", [])
+    if media_list:
+        image_url = media_list[0].get("media_url_https")
 
-    # 文字清理與選擇
-    raw_text = title if len(title) > len(summary) else summary
-    clean_text = raw_text.split('<')[0]  # 濾掉 HTML 標籤
+    print(f"📌 最新推文 ID: {tweet_id}")
+    print(f"📌 推文連結: {tweet_url}")
+    print(f"📌 原文內容: {full_text[:50]}...")
 
-    print(f"📌 抓取到的連結: {link}")
-    print(f"📌 原文內容: {clean_text[:50]}...")
-
-    # 翻譯推文
+    # 翻譯內文
     translator = Translator()
     try:
-        translated_text = translator.translate(clean_text, dest='zh-tw').text
+        translated_text = translator.translate(full_text, dest='zh-tw').text
     except Exception as e:
-        print(f"⚠️ 翻譯失敗，改用原文: {e}")
-        translated_text = clean_text
+        print(f"⚠️ 翻譯失敗，使用原文: {e}")
+        translated_text = full_text
 
-    # 組裝 Discord Embed 訊息
+    # 組裝 Discord Embed
     embed = {
         "title": "📰 Newsboy 快訊 (X / Twitter)",
         "description": translated_text,
-        "url": link,
-        "color": 1940434,  # Twitter 藍色
+        "url": tweet_url,
+        "color": 1940434,  # Twitter 藍
         "footer": {
             "text": "Newsboy • 轉譯自 @Dexerto"
         }
