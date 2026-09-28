@@ -54,12 +54,12 @@ def fetch_and_post():
 
     # 組裝 Discord Embed
     embed = {
-        "title": f"📰 Newsboy 快訊：{translated_title}",
+        "title": f"{translated_title}",
         "description": translated_summary,
         "url": link,
-        "color": 15258703,  # Dexerto 品牌橘色
+        "color": 5793266,  # 十六進位 #5865F2
         "footer": {
-            "text": "Newsboy • 轉譯自 Dexerto.com"
+            "text": "新們男孩 • 譯自 Dexerto"
         }
     }
     
@@ -67,7 +67,7 @@ def fetch_and_post():
         embed["image"] = {"url": image_url}
 
     payload = {
-        "username": "Newsboy",
+        "username": "新們男孩",
         "avatar_url": "https://i.imgur.com/8N69fS7.png",
         "embeds": [embed]
     }
