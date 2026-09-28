@@ -10,20 +10,23 @@ if not DISCORD_WEBHOOK_URL:
     print("❌ Error: 未設定 DISCORD_WEBHOOK_URL")
     sys.exit(1)
 
-# 可用的 Nitter 鏡站清單（若預設的抓不到，會依序嘗試）
+# 可用的 Nitter 鏡站網址清單
 INSTANCES = [
     "https://nitter.poast.org",
     "https://nitter.privacydev.net",
-    "https://nitter.cz",
-    "https://nitter.projectsegfau.lt"
+    "https://nitter.hu",
+    "https://nitter.cz"
 ]
 
 def fetch_tweets():
+    # 正確初始化 ntscraper (不傳入無效參數)
+    scraper = Nitter(log_level=1)
+    
     for instance in INSTANCES:
         print(f"🔍 嘗試使用 Nitter 鏡站: {instance}")
         try:
-            scraper = Nitter(log_level=1, instance=instance)
-            tweets = scraper.get_tweets("Dexerto", mode='user', number=5)
+            # 在 get_tweets 時傳入 instance 參數
+            tweets = scraper.get_tweets("Dexerto", mode='user', number=5, instance=instance)
             
             if tweets and tweets.get('tweets') and len(tweets['tweets']) > 0:
                 print(f"✅ 成功從 {instance} 抓取到 {len(tweets['tweets'])} 則推文！")
@@ -31,7 +34,7 @@ def fetch_tweets():
             else:
                 print(f"⚠️ {instance} 回傳空資料，切換下一個鏡站...")
         except Exception as e:
-            print(f"❌ 鏡站 {instance} 失敗: {e}")
+            print(f"❌ 鏡站 {instance} 抓取失敗: {e}")
             
     return None
 
@@ -40,7 +43,6 @@ def fetch_and_post():
 
     if not tweets:
         print("❌ 所有 Nitter 鏡站皆無法抓取到 @Dexerto 的推文。")
-        # 拋出異常讓 GitHub Actions 顯示失敗 (紅色)，方便排查
         sys.exit(1)
 
     # 取最新的第一則推文
